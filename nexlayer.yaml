@@ -1,0 +1,20 @@
+application:
+  name: alerta
+  pods:
+  - name: app
+    image: alerta/alerta-web:latest
+    path: /
+    servicePorts:
+    - 8080
+    vars:
+      AUTH_REQUIRED: "False"
+      ADMIN_USERS: admin@example.com
+      MONGO_URI: "mongodb://mongo.pod:27017/monitoring"
+  - name: mongo
+    image: mongo:6
+    servicePorts:
+    - 27017
+    volumes:
+    - name: alerta-mongo
+      mountPath: /data/db
+      size: 10Gi
