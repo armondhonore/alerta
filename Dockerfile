@@ -1,53 +1,40 @@
-FROM python:3.12-slim-bookworm
+FROM mirror.gcr.io/library/python:3.10-slim
 
-ARG BUILD_DATE
-ARG BUILD_NUMBER
-ARG RELEASE
-ARG VERSION
-
-LABEL org.opencontainers.image.description="Alerta API (dev)" \
-      org.opencontainers.image.created=$BUILD_DATE \
-      org.opencontainers.image.url="https://github.com/alerta/alerta/pkgs/container/alerta-api" \
-      org.opencontainers.image.source="https://github.com/alerta/alerta" \
-      org.opencontainers.image.version=$RELEASE \
-      org.opencontainers.image.revision=$VERSION \
-      org.opencontainers.image.licenses=Apache-2.0
-
-ENV ALERTA_ENDPOINT=http://localhost:8080
-
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
+# Install system dependencies
+# libpq-dev is required for building psycopg2
+# build-essential provides the compiler and tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    curl \
-    gnupg2 \
-    libldap2-dev \
     libpq-dev \
-    libsasl2-dev \
-    postgresql-client \
-    python3-dev \
-    xmlsec1 && \
-    apt-get -y clean && \
-    apt-get -y autoremove && \
-    rm -rf /var/lib/apt/lists/*
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r alerta && useradd -r -g alerta -d /app -s /sbin/nologin alerta
-
-COPY . /app
 WORKDIR /app
 
-RUN echo "BUILD_NUMBER = '$BUILD_NUMBER'" > alerta/build.py && \
-    echo "BUILD_DATE = '$BUILD_DATE'"    >> alerta/build.py && \
-    echo "BUILD_VCS_NUMBER = '$VERSION'" >> alerta/build.py
+# Upgrade pip to avoid metadata generation issues
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-RUN python -m pip install --upgrade pip && \
-    pip install -r requirements.txt && \
-    pip install -r requirements-ci.txt && \
-    pip install .
+# Copy requirements first
+COPY requirements.txt ./
 
-RUN chown -R alerta:alerta /app
-USER alerta
+# Force install psycopg2-binary instead of psycopg2 to avoid needing pg_config/libpq-dev during build
+# This is a common fix for the 'pg_config executable not found' error
+RUN sed -i 's/psycopg2==.*/psycopg2-binary==2.9.9/g' requirements.txt || true
+RUN sed -i 's/psycopg2>=.*/psycopg2-binary>=2.9.9/g' requirements.txt || true
+RUN sed -i 's/psycopg2 /psycopg2-binary /g' requirements.txt || true
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the application
+COPY . ./
+
+# Install the application
+RUN pip install . 
+
+# Create a minimal configuration file to prevent crash on startup
+RUN mkdir -p /etc/alerta && echo "[mongod]\nuri = mongodb://mongodb:27017/alerta" > /etc/alerta/alerta.conf
 
 EXPOSE 8080
-ENV FLASK_SKIP_DOTENV=1
-CMD ["alertad", "run", "--host", "0.0.0.0", "--port", "8080"]
+
+CMD ["alerta-server"]
